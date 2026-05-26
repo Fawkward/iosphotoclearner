@@ -4,6 +4,7 @@ import Photos
 struct ContentView: View {
     @StateObject private var library = PhotoLibraryManager()
     @State private var showingDeleteConfirm = false
+    @State private var showingResetConfirm = false
     @State private var deletingInProgress = false
 
     var body: some View {
@@ -20,9 +21,19 @@ struct ContentView: View {
             }
         }
         .task {
-            if library.authorizationStatus == .notDetermined {
-                await library.requestAuthorization()
+            await library.checkAuthorizationAndLoad()
+        }
+        .confirmationDialog(
+            "Начать сначала?",
+            isPresented: $showingResetConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Да, сбросить прогресс", role: .destructive) {
+                Task { await library.resetAllProgress() }
             }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Это очистит историю просмотренных фото. Сами фото не пострадают.")
         }
     }
 
@@ -118,6 +129,15 @@ struct ContentView: View {
             .disabled(library.pendingDeletion.isEmpty)
         }
         .padding(.horizontal, 4)
+        .overlay(alignment: .bottom) {
+            if library.totalReviewedAllTime > 0 {
+                Text("Всего пройдено: \(library.totalReviewedAllTime)")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .offset(y: 18)
+            }
+        }
+        .padding(.bottom, library.totalReviewedAllTime > 0 ? 18 : 0)
         .confirmationDialog(
             "Удалить \(library.pendingDeletion.count) фото?",
             isPresented: $showingDeleteConfirm,
@@ -174,29 +194,46 @@ struct ContentView: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 80))
                 .foregroundColor(.green)
-            Text("Готово!").font(.largeTitle).bold()
-            Text("Оставлено: \(library.keptCount)")
-                .font(.title3)
-                .foregroundColor(.green)
-            if !library.pendingDeletion.isEmpty {
-                Text("В корзине: \(library.pendingDeletion.count)")
-                    .font(.title3)
-                    .foregroundColor(.orange)
-                Button("Удалить \(library.pendingDeletion.count) фото") {
-                    showingDeleteConfirm = true
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-            }
-            if library.totalDeletedThisSession > 0 {
-                Text("Удалено за сессию: \(library.totalDeletedThisSession)")
+            if library.keptCount == 0 && library.totalDeletedThisSession == 0 && library.pendingDeletion.isEmpty {
+                Text("Все фото уже просмотрены").font(.title.bold())
+                    .multilineTextAlignment(.center)
+                Text("Чтобы пройти галерею заново — нажми кнопку ниже.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            } else {
+                Text("Готово!").font(.largeTitle).bold()
+                Text("Оставлено: \(library.keptCount)")
+                    .font(.title3)
+                    .foregroundColor(.green)
+                if !library.pendingDeletion.isEmpty {
+                    Text("В корзине: \(library.pendingDeletion.count)")
+                        .font(.title3)
+                        .foregroundColor(.orange)
+                    Button("Удалить \(library.pendingDeletion.count) фото") {
+                        showingDeleteConfirm = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                }
+                if library.totalDeletedThisSession > 0 {
+                    Text("Удалено за сессию: \(library.totalDeletedThisSession)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
             }
-            Button("Начать заново") {
-                Task { await library.loadPhotos() }
+            if library.totalReviewedAllTime > 0 {
+                Text("Всего пройдено за всё время: \(library.totalReviewedAllTime)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 4)
+            }
+            Button("Начать сначала") {
+                showingResetConfirm = true
             }
             .buttonStyle(.bordered)
+            .tint(.orange)
             .padding(.top)
         }
         .padding()
