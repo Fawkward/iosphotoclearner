@@ -240,8 +240,9 @@ struct SwipeCard: View {
 
             // tint overlay
             RoundedRectangle(cornerRadius: 20)
-                .fill(offset.width < 0 ? Color.red.opacity(min(abs(offset.width) / 300, 0.5))
-                                       : Color.green.opacity(min(offset.width / 300, 0.5)))
+                .fill(offset.width < 0
+                      ? Color.red.opacity(min(Double(abs(offset.width)) / 300.0, 0.5))
+                      : Color.green.opacity(min(Double(offset.width) / 300.0, 0.5)))
                 .allowsHitTesting(false)
 
             // big indicator label
@@ -255,11 +256,11 @@ struct SwipeCard: View {
                             .fill(offset.width < 0 ? Color.red : Color.green)
                     )
                     .rotationEffect(.degrees(offset.width < 0 ? -15 : 15))
-                    .opacity(min(abs(offset.width) / swipeThreshold, 1.0))
+                    .opacity(min(Double(abs(offset.width)) / Double(swipeThreshold), 1.0))
             }
         }
         .offset(x: offset.width, y: 0)
-        .rotationEffect(.degrees(Double(offset.width / 20)))
+        .rotationEffect(.degrees(Double(offset.width) / 20.0))
         .gesture(
             DragGesture()
                 .onChanged { value in
