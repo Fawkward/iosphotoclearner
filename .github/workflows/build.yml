@@ -1,0 +1,49 @@
+name: Build iOS App
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build unsigned IPA
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build app (no signing)
+        run: |
+          xcodebuild \
+            -project PhotoSwipe.xcodeproj \
+            -scheme PhotoSwipe \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package into IPA
+        run: |
+          cd build/Build/Products/Release-iphoneos
+          mkdir -p Payload
+          cp -r PhotoSwipe.app Payload/
+          zip -r PhotoSwipe.ipa Payload
+          mv PhotoSwipe.ipa $GITHUB_WORKSPACE/
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: PhotoSwipe-ipa
+          path: PhotoSwipe.ipa
+          retention-days: 30

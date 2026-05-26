@@ -1,0 +1,17 @@
+# macOS
+.DS_Store
+
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# Build artifacts
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Swift
+.swiftpm/
+Packages/
