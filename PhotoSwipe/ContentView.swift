@@ -1,11 +1,13 @@
 import SwiftUI
 import Photos
+import AVKit
 
-struct ContentView: View {
-    @StateObject private var library = PhotoLibraryManager()
+// MARK: - Swiper view (used for both photo and video tabs)
+
+struct SwiperView: View {
+    @ObservedObject var library: PhotoLibraryManager
     @State private var showingDeleteConfirm = false
     @State private var showingResetConfirm = false
-    @State private var deletingInProgress = false
 
     var body: some View {
         Group {
@@ -13,7 +15,7 @@ struct ContentView: View {
             case .notDetermined:
                 requestAccessView
             case .authorized, .limited:
-                swipeView
+                content
             case .denied, .restricted:
                 deniedView
             @unknown default:
@@ -33,14 +35,16 @@ struct ContentView: View {
             }
             Button("Отмена", role: .cancel) {}
         } message: {
-            Text("Это очистит историю просмотренных фото. Сами фото не пострадают.")
+            Text("Очистит историю просмотренных \(library.kind == .photo ? "фото" : "видео"). Сами файлы не пострадают.")
         }
     }
+
+    // MARK: subviews
 
     private var requestAccessView: some View {
         VStack(spacing: 20) {
             Text("PhotoSwipe").font(.largeTitle).bold()
-            Text("Нужен доступ к фотографиям")
+            Text("Нужен доступ к медиа-библиотеке")
             ProgressView()
         }
         .padding()
@@ -48,7 +52,7 @@ struct ContentView: View {
 
     private var deniedView: some View {
         VStack(spacing: 20) {
-            Text("Нет доступа к фото").font(.title2).bold()
+            Text("Нет доступа").font(.title2).bold()
             Text("Разрешите доступ в Настройках → PhotoSwipe → Фото → Все фото")
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
@@ -63,20 +67,22 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private var swipeView: some View {
+    private var content: some View {
         if library.isLoading {
-            ProgressView("Загрузка фото...")
-        } else if !library.hasMorePhotos {
+            ProgressView("Загрузка...")
+        } else if !library.hasMoreAssets {
             finishedView
         } else {
             VStack(spacing: 12) {
                 topBar
                 if let asset = library.currentAsset {
-                    SwipeCard(
-                        asset: asset,
-                        library: library,
-                        key: asset.localIdentifier
-                    )
+                    Group {
+                        if library.kind == .video {
+                            VideoSwipeCard(asset: asset, library: library, key: asset.localIdentifier)
+                        } else {
+                            PhotoSwipeCard(asset: asset, library: library, key: asset.localIdentifier)
+                        }
+                    }
                     .id(asset.localIdentifier)
                 }
                 bottomBar
@@ -87,7 +93,6 @@ struct ContentView: View {
 
     private var topBar: some View {
         HStack {
-            // Undo button
             Button {
                 library.undoLast()
             } label: {
@@ -99,14 +104,12 @@ struct ContentView: View {
 
             Spacer()
 
-            // Position counter
             Text("\(library.currentIndex + 1) / \(library.assets.count)")
                 .font(.headline)
                 .monospacedDigit()
 
             Spacer()
 
-            // Trash bin counter — tap to commit deletions
             Button {
                 if !library.pendingDeletion.isEmpty {
                     showingDeleteConfirm = true
@@ -139,23 +142,19 @@ struct ContentView: View {
         }
         .padding(.bottom, library.totalReviewedAllTime > 0 ? 18 : 0)
         .confirmationDialog(
-            "Удалить \(library.pendingDeletion.count) фото?",
+            "Удалить \(library.pendingDeletion.count) \(library.kind == .photo ? "фото" : "видео")?",
             isPresented: $showingDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Удалить \(library.pendingDeletion.count) фото", role: .destructive) {
-                Task {
-                    deletingInProgress = true
-                    _ = await library.commitDeletions()
-                    deletingInProgress = false
-                }
+            Button("Удалить \(library.pendingDeletion.count)", role: .destructive) {
+                Task { _ = await library.commitDeletions() }
             }
             Button("Очистить список", role: .destructive) {
                 library.clearPending()
             }
             Button("Отмена", role: .cancel) {}
         } message: {
-            Text("Фото попадут в «Недавно удалённые» и будут храниться 30 дней.")
+            Text("Файлы попадут в «Недавно удалённые» и будут храниться 30 дней.")
         }
     }
 
@@ -195,9 +194,10 @@ struct ContentView: View {
                 .font(.system(size: 80))
                 .foregroundColor(.green)
             if library.keptCount == 0 && library.totalDeletedThisSession == 0 && library.pendingDeletion.isEmpty {
-                Text("Все фото уже просмотрены").font(.title.bold())
+                Text(library.kind == .photo ? "Все фото уже просмотрены" : "Все видео уже просмотрены")
+                    .font(.title.bold())
                     .multilineTextAlignment(.center)
-                Text("Чтобы пройти галерею заново — нажми кнопку ниже.")
+                Text("Чтобы пройти заново — нажми кнопку ниже.")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -211,7 +211,7 @@ struct ContentView: View {
                     Text("В корзине: \(library.pendingDeletion.count)")
                         .font(.title3)
                         .foregroundColor(.orange)
-                    Button("Удалить \(library.pendingDeletion.count) фото") {
+                    Button("Удалить \(library.pendingDeletion.count)") {
                         showingDeleteConfirm = true
                     }
                     .buttonStyle(.borderedProminent)
@@ -224,7 +224,7 @@ struct ContentView: View {
                 }
             }
             if library.totalReviewedAllTime > 0 {
-                Text("Всего пройдено за всё время: \(library.totalReviewedAllTime)")
+                Text("Всего пройдено: \(library.totalReviewedAllTime)")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .padding(.top, 4)
@@ -238,11 +238,11 @@ struct ContentView: View {
         }
         .padding()
         .confirmationDialog(
-            "Удалить \(library.pendingDeletion.count) фото?",
+            "Удалить \(library.pendingDeletion.count)?",
             isPresented: $showingDeleteConfirm,
             titleVisibility: .visible
         ) {
-            Button("Удалить \(library.pendingDeletion.count) фото", role: .destructive) {
+            Button("Удалить \(library.pendingDeletion.count)", role: .destructive) {
                 Task { _ = await library.commitDeletions() }
             }
             Button("Отмена", role: .cancel) {}
@@ -250,7 +250,16 @@ struct ContentView: View {
     }
 }
 
-struct SwipeCard: View {
+// MARK: - Swipe gesture mixin (shared logic between photo and video cards)
+
+struct SwipeGestureState {
+    var offset: CGSize = .zero
+    var isProcessing: Bool = false
+}
+
+// MARK: - Photo card
+
+struct PhotoSwipeCard: View {
     let asset: PHAsset
     @ObservedObject var library: PhotoLibraryManager
     let key: String
@@ -262,6 +271,28 @@ struct SwipeCard: View {
     private let swipeThreshold: CGFloat = 120
 
     var body: some View {
+        ZStack(alignment: .top) {
+            cardContent
+                .offset(x: offset.width, y: 0)
+                .rotationEffect(.degrees(Double(offset.width) / 20.0))
+                .gesture(
+                    DragGesture()
+                        .onChanged { value in
+                            if !isProcessing { offset = value.translation }
+                        }
+                        .onEnded { value in
+                            handleSwipeEnd(translation: value.translation)
+                        }
+                )
+        }
+        .task(id: key) {
+            let scale = UIScreen.main.scale
+            let size = CGSize(width: 1000 * scale, height: 1000 * scale)
+            image = await library.loadImage(for: asset, targetSize: size)
+        }
+    }
+
+    private var cardContent: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 20)
                 .fill(Color(.systemGray6))
@@ -275,6 +306,24 @@ struct SwipeCard: View {
                 ProgressView()
             }
 
+            // date overlay at the bottom
+            VStack {
+                Spacer()
+                HStack {
+                    Image(systemName: "calendar")
+                    Text(AssetDateFormatter.format(asset.creationDate))
+                        .lineLimit(1)
+                }
+                .font(.footnote.weight(.medium))
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    Capsule().fill(Color.black.opacity(0.55))
+                )
+                .padding(.bottom, 16)
+            }
+
             // tint overlay
             RoundedRectangle(cornerRadius: 20)
                 .fill(offset.width < 0
@@ -282,7 +331,6 @@ struct SwipeCard: View {
                       : Color.green.opacity(min(Double(offset.width) / 300.0, 0.5)))
                 .allowsHitTesting(false)
 
-            // big indicator label
             if abs(offset.width) > 30 {
                 Text(offset.width < 0 ? "В КОРЗИНУ" : "ОСТАВИТЬ")
                     .font(.system(size: 36, weight: .heavy))
@@ -296,40 +344,20 @@ struct SwipeCard: View {
                     .opacity(min(Double(abs(offset.width)) / Double(swipeThreshold), 1.0))
             }
         }
-        .offset(x: offset.width, y: 0)
-        .rotationEffect(.degrees(Double(offset.width) / 20.0))
-        .gesture(
-            DragGesture()
-                .onChanged { value in
-                    if !isProcessing { offset = value.translation }
-                }
-                .onEnded { value in
-                    handleSwipeEnd(translation: value.translation)
-                }
-        )
-        .task(id: key) {
-            let scale = UIScreen.main.scale
-            let size = CGSize(width: 1000 * scale, height: 1000 * scale)
-            image = await library.loadImage(for: asset, targetSize: size)
-        }
     }
 
     private func handleSwipeEnd(translation: CGSize) {
         guard !isProcessing else { return }
-
         if translation.width < -swipeThreshold {
-            // mark for deletion (instant, no system prompt)
             isProcessing = true
             withAnimation(.easeOut(duration: 0.25)) {
                 offset = CGSize(width: -600, height: translation.height)
             }
-            // small delay so user sees the card fly off
             Task {
                 try? await Task.sleep(nanoseconds: 200_000_000)
                 library.markForDeletion()
             }
         } else if translation.width > swipeThreshold {
-            // keep
             isProcessing = true
             withAnimation(.easeOut(duration: 0.25)) {
                 offset = CGSize(width: 600, height: translation.height)
@@ -339,7 +367,180 @@ struct SwipeCard: View {
                 library.keep()
             }
         } else {
-            // snap back
+            withAnimation(.spring()) { offset = .zero }
+        }
+    }
+}
+
+// MARK: - Video card
+
+struct VideoSwipeCard: View {
+    let asset: PHAsset
+    @ObservedObject var library: PhotoLibraryManager
+    let key: String
+
+    @State private var player: AVPlayer?
+    @State private var thumbnail: UIImage?
+    @State private var offset: CGSize = .zero
+    @State private var isProcessing: Bool = false
+
+    private let swipeThreshold: CGFloat = 120
+
+    var body: some View {
+        cardContent
+            .offset(x: offset.width, y: 0)
+            .rotationEffect(.degrees(Double(offset.width) / 20.0))
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        if !isProcessing { offset = value.translation }
+                    }
+                    .onEnded { value in
+                        handleSwipeEnd(translation: value.translation)
+                    }
+            )
+            .task(id: key) {
+                // load thumbnail quickly, then load actual video
+                let scale = UIScreen.main.scale
+                let size = CGSize(width: 800 * scale, height: 800 * scale)
+                thumbnail = await library.loadImage(for: asset, targetSize: size)
+                await loadVideo()
+            }
+            .onDisappear {
+                player?.pause()
+                player = nil
+            }
+    }
+
+    private var cardContent: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.black)
+
+            // Background = thumbnail until video player ready
+            if let thumb = thumbnail {
+                Image(uiImage: thumb)
+                    .resizable()
+                    .scaledToFit()
+                    .cornerRadius(20)
+                    .opacity(player == nil ? 1.0 : 0.0)
+            }
+
+            if let player = player {
+                VideoPlayer(player: player)
+                    .cornerRadius(20)
+                    .allowsHitTesting(false) // so swipe works on top of video area
+            } else {
+                ProgressView()
+            }
+
+            // Top-right duration badge
+            VStack {
+                HStack {
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Image(systemName: "video.fill")
+                        Text(DurationFormatter.format(asset.duration))
+                            .monospacedDigit()
+                    }
+                    .font(.footnote.weight(.medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Capsule().fill(Color.black.opacity(0.6)))
+                    .padding(12)
+                }
+                Spacer()
+            }
+
+            // Bottom date badge
+            VStack {
+                Spacer()
+                HStack {
+                    Image(systemName: "calendar")
+                    Text(AssetDateFormatter.format(asset.creationDate))
+                        .lineLimit(1)
+                }
+                .font(.footnote.weight(.medium))
+                .foregroundColor(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Capsule().fill(Color.black.opacity(0.6)))
+                .padding(.bottom, 16)
+            }
+
+            // tint overlay
+            RoundedRectangle(cornerRadius: 20)
+                .fill(offset.width < 0
+                      ? Color.red.opacity(min(Double(abs(offset.width)) / 300.0, 0.5))
+                      : Color.green.opacity(min(Double(offset.width) / 300.0, 0.5)))
+                .allowsHitTesting(false)
+
+            if abs(offset.width) > 30 {
+                Text(offset.width < 0 ? "В КОРЗИНУ" : "ОСТАВИТЬ")
+                    .font(.system(size: 36, weight: .heavy))
+                    .foregroundColor(.white)
+                    .padding(20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(offset.width < 0 ? Color.red : Color.green)
+                    )
+                    .rotationEffect(.degrees(offset.width < 0 ? -15 : 15))
+                    .opacity(min(Double(abs(offset.width)) / Double(swipeThreshold), 1.0))
+            }
+        }
+    }
+
+    private func loadVideo() async {
+        let options = PHVideoRequestOptions()
+        options.deliveryMode = .automatic
+        options.isNetworkAccessAllowed = true
+
+        let item: AVPlayerItem? = await withCheckedContinuation { continuation in
+            PHImageManager.default().requestPlayerItem(forVideo: asset, options: options) { item, _ in
+                continuation.resume(returning: item)
+            }
+        }
+
+        guard let item = item else { return }
+        let p = AVPlayer(playerItem: item)
+        p.actionAtItemEnd = .none
+        // loop the video
+        NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { _ in
+            p.seek(to: .zero)
+            p.play()
+        }
+        self.player = p
+        p.play()
+    }
+
+    private func handleSwipeEnd(translation: CGSize) {
+        guard !isProcessing else { return }
+        if translation.width < -swipeThreshold {
+            isProcessing = true
+            player?.pause()
+            withAnimation(.easeOut(duration: 0.25)) {
+                offset = CGSize(width: -600, height: translation.height)
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                library.markForDeletion()
+            }
+        } else if translation.width > swipeThreshold {
+            isProcessing = true
+            player?.pause()
+            withAnimation(.easeOut(duration: 0.25)) {
+                offset = CGSize(width: 600, height: translation.height)
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                library.keep()
+            }
+        } else {
             withAnimation(.spring()) { offset = .zero }
         }
     }
