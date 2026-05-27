@@ -156,15 +156,22 @@ class PhotoLibraryManager: ObservableObject {
         isLoading = false
 
         // Compute pending size in background (file size lookup is slow for many items)
-        Task.detached { [pendingAssets] in
-            var total: Int64 = 0
-            for a in pendingAssets {
-                total += PhotoLibraryManager.fileSize(of: a)
-            }
-            await MainActor.run { [weak self] in
+        let assetsToSize = pendingAssets
+        Task { [weak self] in
+            let total = await Self.computeTotalSize(of: assetsToSize)
+            await MainActor.run {
                 self?.pendingSizeBytes = total
             }
         }
+    }
+
+    /// Sum file sizes of given assets off the main actor.
+    nonisolated private static func computeTotalSize(of assets: [PHAsset]) async -> Int64 {
+        var sum: Int64 = 0
+        for a in assets {
+            sum += fileSize(of: a)
+        }
+        return sum
     }
 
     func resetAllProgress() async {
@@ -227,7 +234,9 @@ class PhotoLibraryManager: ObservableObject {
             options.isSynchronous = false
             options.resizeMode = .exact
             options.progressHandler = { progress, _, _, _ in
-                Task { @MainActor in onProgress?(progress) }
+                DispatchQueue.main.async {
+                    onProgress?(progress)
+                }
             }
 
             var didResume = false
@@ -290,9 +299,9 @@ class PhotoLibraryManager: ObservableObject {
         pendingDeletion.append(asset)
         currentIndex += 1
         savePersistedState()
-        Task.detached { [asset] in
+        Task.detached { [asset, weak self] in
             let size = PhotoLibraryManager.fileSize(of: asset)
-            await MainActor.run { [weak self] in
+            await MainActor.run {
                 self?.pendingSizeBytes += size
             }
         }
@@ -306,9 +315,9 @@ class PhotoLibraryManager: ObservableObject {
         if pendingIdentifiers.contains(id) {
             pendingIdentifiers.remove(id)
             pendingDeletion.removeAll { $0.localIdentifier == id }
-            Task.detached { [asset] in
+            Task.detached { [asset, weak self] in
                 let size = PhotoLibraryManager.fileSize(of: asset)
-                await MainActor.run { [weak self] in
+                await MainActor.run {
                     guard let self = self else { return }
                     self.pendingSizeBytes = max(0, self.pendingSizeBytes - size)
                 }

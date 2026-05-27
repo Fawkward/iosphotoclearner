@@ -338,9 +338,11 @@ struct PhotoSwipeCard: View {
         }
 
         // 2. compute file size in background
-        Task.detached { [asset] in
-            let size = PhotoLibraryManager.fileSize(of: asset)
-            await MainActor.run { fileSize = size }
+        Task {
+            let size = await Task.detached {
+                PhotoLibraryManager.fileSize(of: asset)
+            }.value
+            fileSize = size
         }
 
         // 3. start full-quality load (may download from iCloud)
@@ -503,9 +505,11 @@ struct VideoSwipeCard: View {
                 let size = CGSize(width: 800 * scale, height: 800 * scale)
                 thumbnail = await library.loadThumbnail(for: asset, targetSize: size)
                 // file size in background
-                Task.detached { [asset] in
-                    let s = PhotoLibraryManager.fileSize(of: asset)
-                    await MainActor.run { fileSize = s }
+                Task {
+                    let s = await Task.detached {
+                        PhotoLibraryManager.fileSize(of: asset)
+                    }.value
+                    fileSize = s
                 }
                 await loadVideo()
             }
