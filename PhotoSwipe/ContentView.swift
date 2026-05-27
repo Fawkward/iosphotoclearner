@@ -8,6 +8,7 @@ struct SwiperView: View {
     @ObservedObject var library: PhotoLibraryManager
     @State private var showingDeleteConfirm = false
     @State private var showingResetConfirm = false
+    @State private var showingGrid = false
 
     var body: some View {
         Group {
@@ -92,15 +93,23 @@ struct SwiperView: View {
     }
 
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 12) {
             Button {
                 library.undoLast()
             } label: {
                 Image(systemName: "arrow.uturn.backward.circle.fill")
-                    .font(.title)
+                    .font(.title2)
                     .foregroundColor(library.currentIndex > 0 ? .blue : .gray.opacity(0.4))
             }
             .disabled(library.currentIndex == 0)
+
+            Button {
+                showingGrid = true
+            } label: {
+                Image(systemName: "square.grid.3x3.fill")
+                    .font(.title2)
+                    .foregroundColor(.blue)
+            }
 
             Spacer()
 
@@ -133,14 +142,28 @@ struct SwiperView: View {
         }
         .padding(.horizontal, 4)
         .overlay(alignment: .bottom) {
-            if library.totalReviewedAllTime > 0 {
-                Text("Всего пройдено: \(library.totalReviewedAllTime)")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .offset(y: 18)
+            HStack(spacing: 12) {
+                if library.totalReviewedAllTime > 0 {
+                    Text("Пройдено: \(library.totalReviewedAllTime)")
+                }
+                if library.pendingSizeBytes > 0 {
+                    Text("• Освободишь: \(ByteFormatter.format(library.pendingSizeBytes))")
+                        .foregroundColor(.red)
+                }
             }
+            .font(.caption2)
+            .foregroundColor(.secondary)
+            .offset(y: 18)
         }
-        .padding(.bottom, library.totalReviewedAllTime > 0 ? 18 : 0)
+        .padding(.bottom, (library.totalReviewedAllTime > 0 || library.pendingSizeBytes > 0) ? 18 : 0)
+        .sheet(isPresented: $showingGrid) {
+            GridPreviewView(library: library, onSelect: { idx in
+                library.jumpTo(index: idx)
+                showingGrid = false
+            }, onClose: {
+                showingGrid = false
+            })
+        }
         .confirmationDialog(
             "Удалить \(library.pendingDeletion.count) \(library.kind == .photo ? "фото" : "видео")?",
             isPresented: $showingDeleteConfirm,
@@ -154,7 +177,7 @@ struct SwiperView: View {
             }
             Button("Отмена", role: .cancel) {}
         } message: {
-            Text("Файлы попадут в «Недавно удалённые» и будут храниться 30 дней.")
+            Text("Файлы попадут в «Недавно удалённые». Освободится: \(ByteFormatter.format(library.pendingSizeBytes)).")
         }
     }
 
@@ -208,9 +231,14 @@ struct SwiperView: View {
                     .font(.title3)
                     .foregroundColor(.green)
                 if !library.pendingDeletion.isEmpty {
-                    Text("В корзине: \(library.pendingDeletion.count)")
-                        .font(.title3)
-                        .foregroundColor(.orange)
+                    VStack(spacing: 4) {
+                        Text("В корзине: \(library.pendingDeletion.count)")
+                            .font(.title3)
+                            .foregroundColor(.orange)
+                        Text("Освободишь: \(ByteFormatter.format(library.pendingSizeBytes))")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundColor(.red)
+                    }
                     Button("Удалить \(library.pendingDeletion.count)") {
                         showingDeleteConfirm = true
                     }
@@ -218,9 +246,16 @@ struct SwiperView: View {
                     .tint(.red)
                 }
                 if library.totalDeletedThisSession > 0 {
-                    Text("Удалено за сессию: \(library.totalDeletedThisSession)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    VStack(spacing: 2) {
+                        Text("Удалено за сессию: \(library.totalDeletedThisSession)")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        if library.freedSizeThisSession > 0 {
+                            Text("Освобождено: \(ByteFormatter.format(library.freedSizeThisSession))")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundColor(.green)
+                        }
+                    }
                 }
             }
             if library.totalReviewedAllTime > 0 {
@@ -265,30 +300,63 @@ struct PhotoSwipeCard: View {
     let key: String
 
     @State private var image: UIImage?
+    @State private var loadProgress: Double = 0
+    @State private var loadFailed: Bool = false
+    @State private var fileSize: Int64 = 0
     @State private var offset: CGSize = .zero
     @State private var isProcessing: Bool = false
 
     private let swipeThreshold: CGFloat = 120
 
     var body: some View {
-        ZStack(alignment: .top) {
-            cardContent
-                .offset(x: offset.width, y: 0)
-                .rotationEffect(.degrees(Double(offset.width) / 20.0))
-                .gesture(
-                    DragGesture()
-                        .onChanged { value in
-                            if !isProcessing { offset = value.translation }
-                        }
-                        .onEnded { value in
-                            handleSwipeEnd(translation: value.translation)
-                        }
-                )
+        cardContent
+            .offset(x: offset.width, y: 0)
+            .rotationEffect(.degrees(Double(offset.width) / 20.0))
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        if !isProcessing { offset = value.translation }
+                    }
+                    .onEnded { value in
+                        handleSwipeEnd(translation: value.translation)
+                    }
+            )
+            .task(id: key) {
+                await loadFullImage()
+            }
+    }
+
+    private func loadFullImage() async {
+        image = nil
+        loadProgress = 0
+        loadFailed = false
+
+        // 1. show a fast cached thumbnail immediately (no network)
+        let thumbSize = CGSize(width: 600, height: 600)
+        if let thumb = await library.loadThumbnail(for: asset, targetSize: thumbSize) {
+            image = thumb
         }
-        .task(id: key) {
-            let scale = UIScreen.main.scale
-            let size = CGSize(width: 1000 * scale, height: 1000 * scale)
-            image = await library.loadImage(for: asset, targetSize: size)
+
+        // 2. compute file size in background
+        Task.detached { [asset] in
+            let size = PhotoLibraryManager.fileSize(of: asset)
+            await MainActor.run { fileSize = size }
+        }
+
+        // 3. start full-quality load (may download from iCloud)
+        let scale = UIScreen.main.scale
+        let fullSize = CGSize(width: 1000 * scale, height: 1000 * scale)
+        let result = await library.loadImage(
+            for: asset,
+            targetSize: fullSize,
+            onProgress: { p in loadProgress = p }
+        )
+        if let result = result {
+            image = result
+            loadProgress = 1.0
+        } else if image == nil {
+            // no thumbnail and no full image — real failure
+            loadFailed = true
         }
     }
 
@@ -302,25 +370,54 @@ struct PhotoSwipeCard: View {
                     .resizable()
                     .scaledToFit()
                     .cornerRadius(20)
+            } else if loadFailed {
+                VStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.icloud")
+                        .font(.system(size: 50))
+                        .foregroundColor(.orange)
+                    Text("Не удалось загрузить")
+                        .font(.headline)
+                    Text("Возможно, нет интернета или фото удалено")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                    Button("Повторить") {
+                        Task { await loadFullImage() }
+                    }
+                    .buttonStyle(.bordered)
+                    .padding(.top, 4)
+                }
+                .padding()
             } else {
-                ProgressView()
+                VStack(spacing: 8) {
+                    ProgressView(value: loadProgress)
+                        .frame(width: 120)
+                    if loadProgress > 0 && loadProgress < 1 {
+                        Text("Загрузка из iCloud… \(Int(loadProgress * 100))%")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
 
-            // date overlay at the bottom
+            // bottom info bar — date + size
             VStack {
                 Spacer()
-                HStack {
+                HStack(spacing: 6) {
                     Image(systemName: "calendar")
                     Text(AssetDateFormatter.format(asset.creationDate))
                         .lineLimit(1)
+                    if fileSize > 0 {
+                        Text("•")
+                        Image(systemName: "internaldrive")
+                        Text(ByteFormatter.format(fileSize))
+                    }
                 }
                 .font(.footnote.weight(.medium))
                 .foregroundColor(.white)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(
-                    Capsule().fill(Color.black.opacity(0.55))
-                )
+                .background(Capsule().fill(Color.black.opacity(0.55)))
                 .padding(.bottom, 16)
             }
 
@@ -381,6 +478,7 @@ struct VideoSwipeCard: View {
 
     @State private var player: AVPlayer?
     @State private var thumbnail: UIImage?
+    @State private var fileSize: Int64 = 0
     @State private var offset: CGSize = .zero
     @State private var isProcessing: Bool = false
 
@@ -400,10 +498,15 @@ struct VideoSwipeCard: View {
                     }
             )
             .task(id: key) {
-                // load thumbnail quickly, then load actual video
+                // fast cached thumbnail (no network wait)
                 let scale = UIScreen.main.scale
                 let size = CGSize(width: 800 * scale, height: 800 * scale)
-                thumbnail = await library.loadImage(for: asset, targetSize: size)
+                thumbnail = await library.loadThumbnail(for: asset, targetSize: size)
+                // file size in background
+                Task.detached { [asset] in
+                    let s = PhotoLibraryManager.fileSize(of: asset)
+                    await MainActor.run { fileSize = s }
+                }
                 await loadVideo()
             }
             .onDisappear {
@@ -453,13 +556,18 @@ struct VideoSwipeCard: View {
                 Spacer()
             }
 
-            // Bottom date badge
+            // Bottom date badge + size
             VStack {
                 Spacer()
-                HStack {
+                HStack(spacing: 6) {
                     Image(systemName: "calendar")
                     Text(AssetDateFormatter.format(asset.creationDate))
                         .lineLimit(1)
+                    if fileSize > 0 {
+                        Text("•")
+                        Image(systemName: "internaldrive")
+                        Text(ByteFormatter.format(fileSize))
+                    }
                 }
                 .font(.footnote.weight(.medium))
                 .foregroundColor(.white)
@@ -542,6 +650,109 @@ struct VideoSwipeCard: View {
             }
         } else {
             withAnimation(.spring()) { offset = .zero }
+        }
+    }
+}
+
+// MARK: - Grid preview (jump-to-start picker)
+
+struct GridPreviewView: View {
+    @ObservedObject var library: PhotoLibraryManager
+    let onSelect: (Int) -> Void
+    let onClose: () -> Void
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 100), spacing: 4)
+    ]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 4) {
+                    ForEach(Array(library.assets.enumerated()), id: \.element.localIdentifier) { idx, asset in
+                        GridThumb(asset: asset,
+                                  library: library,
+                                  index: idx,
+                                  isCurrent: idx == library.currentIndex,
+                                  isPending: library.pendingDeletion.contains(where: { $0.localIdentifier == asset.localIdentifier }))
+                            .onTapGesture {
+                                onSelect(idx)
+                            }
+                    }
+                }
+                .padding(4)
+            }
+            .navigationTitle("Выбери с чего начать")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Готово") { onClose() }
+                }
+            }
+        }
+    }
+}
+
+struct GridThumb: View {
+    let asset: PHAsset
+    @ObservedObject var library: PhotoLibraryManager
+    let index: Int
+    let isCurrent: Bool
+    let isPending: Bool
+
+    @State private var thumb: UIImage?
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Rectangle()
+                .fill(Color(.systemGray5))
+                .aspectRatio(1, contentMode: .fit)
+                .overlay {
+                    if let thumb = thumb {
+                        Image(uiImage: thumb)
+                            .resizable()
+                            .scaledToFill()
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .clipped()
+                .overlay {
+                    if isCurrent {
+                        Rectangle()
+                            .strokeBorder(Color.blue, lineWidth: 3)
+                    }
+                    if isPending {
+                        Rectangle()
+                            .fill(Color.red.opacity(0.4))
+                    }
+                }
+
+            // duration badge for videos
+            if asset.mediaType == .video {
+                Text(DurationFormatter.format(asset.duration))
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.black.opacity(0.6)))
+                    .padding(4)
+            }
+            if isPending {
+                Image(systemName: "trash.fill")
+                    .font(.caption.bold())
+                    .foregroundColor(.white)
+                    .padding(6)
+                    .background(Circle().fill(Color.red))
+                    .padding(4)
+            }
+        }
+        .task {
+            // load tiny thumb — cached locally, no iCloud wait
+            thumb = await library.loadThumbnail(
+                for: asset,
+                targetSize: CGSize(width: 200, height: 200)
+            )
         }
     }
 }
