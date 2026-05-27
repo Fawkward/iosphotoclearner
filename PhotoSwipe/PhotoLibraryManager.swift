@@ -157,11 +157,9 @@ class PhotoLibraryManager: ObservableObject {
 
         // Compute pending size in background (file size lookup is slow for many items)
         let assetsToSize = pendingAssets
-        Task { [weak self] in
+        Task {
             let total = await Self.computeTotalSize(of: assetsToSize)
-            await MainActor.run {
-                self?.pendingSizeBytes = total
-            }
+            self.pendingSizeBytes = total
         }
     }
 
@@ -299,11 +297,11 @@ class PhotoLibraryManager: ObservableObject {
         pendingDeletion.append(asset)
         currentIndex += 1
         savePersistedState()
-        Task.detached { [asset, weak self] in
-            let size = PhotoLibraryManager.fileSize(of: asset)
-            await MainActor.run {
-                self?.pendingSizeBytes += size
-            }
+        // Compute size in background, then bump counter on main actor
+        let capturedAsset = asset
+        Task {
+            let size = await Self.singleSize(of: capturedAsset)
+            self.pendingSizeBytes += size
         }
     }
 
@@ -315,12 +313,10 @@ class PhotoLibraryManager: ObservableObject {
         if pendingIdentifiers.contains(id) {
             pendingIdentifiers.remove(id)
             pendingDeletion.removeAll { $0.localIdentifier == id }
-            Task.detached { [asset, weak self] in
-                let size = PhotoLibraryManager.fileSize(of: asset)
-                await MainActor.run {
-                    guard let self = self else { return }
-                    self.pendingSizeBytes = max(0, self.pendingSizeBytes - size)
-                }
+            let capturedAsset = asset
+            Task {
+                let size = await Self.singleSize(of: capturedAsset)
+                self.pendingSizeBytes = max(0, self.pendingSizeBytes - size)
             }
         } else if reviewedIdentifiers.contains(id) {
             reviewedIdentifiers.remove(id)
@@ -328,6 +324,11 @@ class PhotoLibraryManager: ObservableObject {
             if keptCount > 0 { keptCount -= 1 }
         }
         savePersistedState()
+    }
+
+    /// Async helper to compute size off the main actor.
+    nonisolated private static func singleSize(of asset: PHAsset) async -> Int64 {
+        return fileSize(of: asset)
     }
 
     func commitDeletions() async -> Bool {
