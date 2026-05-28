@@ -89,6 +89,22 @@ struct SwiperView: View {
                 bottomBar
             }
             .padding()
+            .overlay(alignment: .top) {
+                if library.lastSavedFeedback {
+                    HStack(spacing: 8) {
+                        Image(systemName: "star.fill")
+                        Text("Сохранено в «PhotoSwipe Избранное»")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(Color.blue))
+                    .padding(.top, 60)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(response: 0.4), value: library.lastSavedFeedback)
         }
     }
 
@@ -182,7 +198,7 @@ struct SwiperView: View {
     }
 
     private var bottomBar: some View {
-        HStack {
+        HStack(alignment: .top) {
             VStack(spacing: 4) {
                 Image(systemName: "arrow.left")
                 Text("В корзину").font(.caption)
@@ -191,19 +207,27 @@ struct SwiperView: View {
             .frame(maxWidth: .infinity)
 
             VStack(spacing: 4) {
-                Text("Оставлено")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                Text("\(library.keptCount)")
-                    .font(.title3.bold())
-                    .foregroundColor(.green)
-                    .monospacedDigit()
+                Image(systemName: "arrow.up")
+                Text("Избранное").font(.caption)
+                if library.savedCount > 0 {
+                    Text("⭐️ \(library.savedCount)")
+                        .font(.caption2.bold())
+                        .foregroundColor(.blue)
+                        .monospacedDigit()
+                }
             }
+            .foregroundColor(.blue)
             .frame(maxWidth: .infinity)
 
             VStack(spacing: 4) {
                 Image(systemName: "arrow.right")
                 Text("Оставить").font(.caption)
+                if library.keptCount > 0 {
+                    Text("\(library.keptCount)")
+                        .font(.caption2.bold())
+                        .foregroundColor(.green)
+                        .monospacedDigit()
+                }
             }
             .foregroundColor(.green)
             .frame(maxWidth: .infinity)
@@ -230,6 +254,11 @@ struct SwiperView: View {
                 Text("Оставлено: \(library.keptCount)")
                     .font(.title3)
                     .foregroundColor(.green)
+                if library.savedCount > 0 {
+                    Text("⭐️ В избранном: \(library.savedCount)")
+                        .font(.title3)
+                        .foregroundColor(.blue)
+                }
                 if !library.pendingDeletion.isEmpty {
                     VStack(spacing: 4) {
                         Text("В корзине: \(library.pendingDeletion.count)")
@@ -310,7 +339,7 @@ struct PhotoSwipeCard: View {
 
     var body: some View {
         cardContent
-            .offset(x: offset.width, y: 0)
+            .offset(x: offset.width, y: offset.height)
             .rotationEffect(.degrees(Double(offset.width) / 20.0))
             .gesture(
                 DragGesture()
@@ -423,14 +452,19 @@ struct PhotoSwipeCard: View {
                 .padding(.bottom, 16)
             }
 
-            // tint overlay
+            // tint overlay (horizontal = red/green, vertical up = blue)
             RoundedRectangle(cornerRadius: 20)
-                .fill(offset.width < 0
-                      ? Color.red.opacity(min(Double(abs(offset.width)) / 300.0, 0.5))
-                      : Color.green.opacity(min(Double(offset.width) / 300.0, 0.5)))
+                .fill(tintColor)
                 .allowsHitTesting(false)
 
-            if abs(offset.width) > 30 {
+            if isUpSwipe {
+                Text("⭐️ В ИЗБРАННОЕ")
+                    .font(.system(size: 32, weight: .heavy))
+                    .foregroundColor(.white)
+                    .padding(20)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.blue))
+                    .opacity(min(Double(abs(offset.height)) / Double(swipeThreshold), 1.0))
+            } else if abs(offset.width) > 30 {
                 Text(offset.width < 0 ? "В КОРЗИНУ" : "ОСТАВИТЬ")
                     .font(.system(size: 36, weight: .heavy))
                     .foregroundColor(.white)
@@ -445,9 +479,33 @@ struct PhotoSwipeCard: View {
         }
     }
 
+    private var isUpSwipe: Bool {
+        offset.height < -30 && abs(offset.height) > abs(offset.width)
+    }
+
+    private var tintColor: Color {
+        if isUpSwipe {
+            return Color.blue.opacity(min(Double(abs(offset.height)) / 300.0, 0.5))
+        } else if offset.width < 0 {
+            return Color.red.opacity(min(Double(abs(offset.width)) / 300.0, 0.5))
+        } else {
+            return Color.green.opacity(min(Double(offset.width) / 300.0, 0.5))
+        }
+    }
+
     private func handleSwipeEnd(translation: CGSize) {
         guard !isProcessing else { return }
-        if translation.width < -swipeThreshold {
+        // Up-swipe (save to album) takes priority when vertical motion dominates
+        if translation.height < -swipeThreshold && abs(translation.height) > abs(translation.width) {
+            isProcessing = true
+            withAnimation(.easeOut(duration: 0.3)) {
+                offset = CGSize(width: translation.width, height: -800)
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                await library.saveToAlbumAndAdvance()
+            }
+        } else if translation.width < -swipeThreshold {
             isProcessing = true
             withAnimation(.easeOut(duration: 0.25)) {
                 offset = CGSize(width: -600, height: translation.height)
@@ -488,7 +546,7 @@ struct VideoSwipeCard: View {
 
     var body: some View {
         cardContent
-            .offset(x: offset.width, y: 0)
+            .offset(x: offset.width, y: offset.height)
             .rotationEffect(.degrees(Double(offset.width) / 20.0))
             .gesture(
                 DragGesture()
@@ -581,14 +639,19 @@ struct VideoSwipeCard: View {
                 .padding(.bottom, 16)
             }
 
-            // tint overlay
+            // tint overlay (horizontal = red/green, vertical up = blue)
             RoundedRectangle(cornerRadius: 20)
-                .fill(offset.width < 0
-                      ? Color.red.opacity(min(Double(abs(offset.width)) / 300.0, 0.5))
-                      : Color.green.opacity(min(Double(offset.width) / 300.0, 0.5)))
+                .fill(tintColor)
                 .allowsHitTesting(false)
 
-            if abs(offset.width) > 30 {
+            if isUpSwipe {
+                Text("⭐️ В ИЗБРАННОЕ")
+                    .font(.system(size: 32, weight: .heavy))
+                    .foregroundColor(.white)
+                    .padding(20)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.blue))
+                    .opacity(min(Double(abs(offset.height)) / Double(swipeThreshold), 1.0))
+            } else if abs(offset.width) > 30 {
                 Text(offset.width < 0 ? "В КОРЗИНУ" : "ОСТАВИТЬ")
                     .font(.system(size: 36, weight: .heavy))
                     .foregroundColor(.white)
@@ -600,6 +663,20 @@ struct VideoSwipeCard: View {
                     .rotationEffect(.degrees(offset.width < 0 ? -15 : 15))
                     .opacity(min(Double(abs(offset.width)) / Double(swipeThreshold), 1.0))
             }
+        }
+    }
+
+    private var isUpSwipe: Bool {
+        offset.height < -30 && abs(offset.height) > abs(offset.width)
+    }
+
+    private var tintColor: Color {
+        if isUpSwipe {
+            return Color.blue.opacity(min(Double(abs(offset.height)) / 300.0, 0.5))
+        } else if offset.width < 0 {
+            return Color.red.opacity(min(Double(abs(offset.width)) / 300.0, 0.5))
+        } else {
+            return Color.green.opacity(min(Double(offset.width) / 300.0, 0.5))
         }
     }
 
@@ -632,7 +709,17 @@ struct VideoSwipeCard: View {
 
     private func handleSwipeEnd(translation: CGSize) {
         guard !isProcessing else { return }
-        if translation.width < -swipeThreshold {
+        if translation.height < -swipeThreshold && abs(translation.height) > abs(translation.width) {
+            isProcessing = true
+            player?.pause()
+            withAnimation(.easeOut(duration: 0.3)) {
+                offset = CGSize(width: translation.width, height: -800)
+            }
+            Task {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+                await library.saveToAlbumAndAdvance()
+            }
+        } else if translation.width < -swipeThreshold {
             isProcessing = true
             player?.pause()
             withAnimation(.easeOut(duration: 0.25)) {

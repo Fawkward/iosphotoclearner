@@ -54,6 +54,12 @@ class PhotoLibraryManager: ObservableObject {
     @Published var totalDeletedThisSession: Int = 0
     @Published var totalReviewedAllTime: Int = 0
 
+    /// Count of photos saved to the special album this session.
+    @Published var savedCount: Int = 0
+
+    /// Brief flash message shown after saving to album (e.g. "Сохранено в альбом").
+    @Published var lastSavedFeedback: Bool = false
+
     /// Total bytes that would be freed if user committed the current pending list.
     @Published var pendingSizeBytes: Int64 = 0
 
@@ -150,6 +156,7 @@ class PhotoLibraryManager: ObservableObject {
         self.pendingDeletion = pendingAssets
         self.currentIndex = 0
         self.keptCount = 0
+        self.savedCount = 0
         self.totalDeletedThisSession = 0
         self.freedSizeThisSession = 0
         self.totalReviewedAllTime = reviewedIdentifiers.count
@@ -289,6 +296,81 @@ class PhotoLibraryManager: ObservableObject {
         keptCount += 1
         currentIndex += 1
         savePersistedState()
+    }
+
+    // MARK: - Save to special album
+
+    private static let albumTitle = "PhotoSwipe Избранное"
+
+    /// Finds the app's album, creating it if it doesn't exist yet.
+    nonisolated private static func fetchOrCreateAlbum() async -> PHAssetCollection? {
+        // Try to find existing album by title
+        let fetchOptions = PHFetchOptions()
+        fetchOptions.predicate = NSPredicate(format: "title = %@", albumTitle)
+        let collections = PHAssetCollection.fetchAssetCollections(
+            with: .album, subtype: .any, options: fetchOptions
+        )
+        if let existing = collections.firstObject {
+            return existing
+        }
+
+        // Create it
+        var placeholderID: String?
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                let request = PHAssetCollectionChangeRequest.creationRequestForAssetCollection(withTitle: albumTitle)
+                placeholderID = request.placeholderForCreatedAssetCollection.localIdentifier
+            }
+        } catch {
+            print("Failed to create album: \(error.localizedDescription)")
+            return nil
+        }
+
+        guard let id = placeholderID else { return nil }
+        let created = PHAssetCollection.fetchAssetCollections(
+            withLocalIdentifiers: [id], options: nil
+        )
+        return created.firstObject
+    }
+
+    /// Saves the current photo/video into the app's special album.
+    /// The asset stays in the main library; it's just also referenced in the album.
+    /// Marks it as reviewed and advances to the next item.
+    func saveToAlbumAndAdvance() async {
+        guard let asset = currentAsset else { return }
+        let capturedAsset = asset
+
+        let success = await Self.addToAlbum(asset: capturedAsset)
+        if success {
+            savedCount += 1
+            lastSavedFeedback = true
+            // auto-hide feedback after a moment
+            Task {
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                lastSavedFeedback = false
+            }
+        }
+        // Whether or not the album write succeeded, treat as "kept" so we move on
+        reviewedIdentifiers.insert(capturedAsset.localIdentifier)
+        totalReviewedAllTime = reviewedIdentifiers.count
+        keptCount += 1
+        currentIndex += 1
+        savePersistedState()
+    }
+
+    nonisolated private static func addToAlbum(asset: PHAsset) async -> Bool {
+        guard let album = await fetchOrCreateAlbum() else { return false }
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                if let changeRequest = PHAssetCollectionChangeRequest(for: album) {
+                    changeRequest.addAssets([asset] as NSArray)
+                }
+            }
+            return true
+        } catch {
+            print("Failed to add to album: \(error.localizedDescription)")
+            return false
+        }
     }
 
     func markForDeletion() {
