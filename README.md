@@ -66,16 +66,15 @@ iOS only runs apps signed for your specific device, so whichever option you pick
 
 You'll need [AltStore](https://altstore.io) (or [Sideloadly](https://sideloadly.io)) set up on your phone first — their sites have short guides.
 
-### Option 1 — Just download (easiest)
+### Option 1 — Just download (recommended)
 
-1. Go to the [**Releases**](../../releases) page of this repo.
-2. Download the latest `PhotoSwipe-vX.X.ipa`.
-3. Get it onto your phone (AirDrop, iCloud Drive, or any cloud app).
-4. Open it with **AltStore** → it signs with your Apple ID and installs.
-5. Trust your Apple ID: Settings → General → VPN & Device Management.
-6. On iOS 16+: enable Settings → Privacy & Security → Developer Mode.
+1. Go to the [**Releases**](../../releases/latest) page and download the latest `PhotoSwipe-vX.X.ipa`.
+2. Get it onto your phone (AirDrop, iCloud Drive, or any cloud app).
+3. Open it with **AltStore** → it signs with your Apple ID and installs.
+4. Trust your Apple ID: Settings → General → VPN & Device Management.
+5. On iOS 16+: enable Settings → Privacy & Security → Developer Mode.
 
-That's it — no GitHub Actions, no building anything.
+That's it — no building anything, no GitHub account needed.
 
 ### Option 2 — Build it yourself in the cloud
 
@@ -85,17 +84,6 @@ If there's no release yet, or you changed the code:
 2. Go to the **Actions** tab — a build starts automatically. Wait ~5 minutes for the green checkmark.
 3. Open the finished run, scroll to **Artifacts**, download `PhotoSwipe-ipa`, and unzip to get the `.ipa`.
 4. Install it via AltStore exactly like steps 3–6 above.
-
-### Option 3 — Cut your own release
-
-To produce a downloadable release (so you or others can use Option 1 later), push a version tag:
-
-```bash
-git tag v1.0
-git push origin v1.0
-```
-
-The workflow builds the app and automatically publishes a GitHub Release with the `.ipa` attached. Every new tag (`v1.1`, `v1.2`, …) makes a new release.
 
 > First launch asks for photo-library permission. Swiping up the first time may also ask permission to add to albums — both are required for the app to work.
 
