@@ -3,7 +3,12 @@ name: Build iOS App
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]          # pushing a tag like v1.0 triggers a Release
   workflow_dispatch:
+
+# allow the workflow to create releases
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -33,17 +38,52 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
 
+      - name: Determine IPA name
+        id: ipaname
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+            echo "name=PhotoSwipe-${VERSION}.ipa" >> "$GITHUB_OUTPUT"
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=PhotoSwipe.ipa" >> "$GITHUB_OUTPUT"
+            echo "version=dev" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Package into IPA
         run: |
           cd build/Build/Products/Release-iphoneos
           mkdir -p Payload
           cp -r PhotoSwipe.app Payload/
-          zip -r PhotoSwipe.ipa Payload
-          mv PhotoSwipe.ipa $GITHUB_WORKSPACE/
+          zip -r "${{ steps.ipaname.outputs.name }}" Payload
+          mv "${{ steps.ipaname.outputs.name }}" "$GITHUB_WORKSPACE/"
 
-      - name: Upload IPA
+      # Always upload as an artifact (handy for testing on every push)
+      - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: PhotoSwipe-ipa
-          path: PhotoSwipe.ipa
+          path: ${{ steps.ipaname.outputs.name }}
           retention-days: 30
+
+      # On a version tag, also publish a GitHub Release with the IPA attached
+      - name: Publish Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PhotoSwipe ${{ steps.ipaname.outputs.version }}
+          files: ${{ steps.ipaname.outputs.name }}
+          body: |
+            ## PhotoSwipe ${{ steps.ipaname.outputs.version }}
+
+            Unsigned `.ipa` for sideloading. **This is not a ready-to-tap installer** — iOS only runs apps signed for your device, so you sign it yourself (for free) with AltStore or Sideloadly using your own Apple ID.
+
+            ### Install
+            1. Download `${{ steps.ipaname.outputs.name }}` below.
+            2. Open it with **AltStore** (or **Sideloadly**) and sign in with your Apple ID.
+            3. Trust your Apple ID: Settings → General → VPN & Device Management.
+            4. On iOS 16+: enable Settings → Privacy & Security → Developer Mode.
+
+            Apps signed with a free Apple ID work for 7 days; AltStore re-signs them automatically. See the README for full instructions.
+          draft: false
+          prerelease: false
