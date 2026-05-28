@@ -1,5 +1,7 @@
 # PhotoSwipe 🗑️
 
+[![Latest release](https://img.shields.io/github/v/release/Fawkward/iosphotoclearner?label=download&style=flat-square)](../../releases/latest)
+
 **Clean up your camera roll the way you swipe on dating apps.** One photo at a time, left to delete, right to keep, up to favorite. Built for people whose Photos library has thousands of screenshots, blurry shots, and duplicates they'll never sort through the normal way.
 
 No account. No subscription. No ads. No data leaves your phone — everything runs locally against your own photo library.
@@ -60,14 +62,40 @@ It's a SwiftUI app targeting iOS 16+. The whole thing is three Swift files plus 
 
 ## Install it on your iPhone
 
-You'll need a free [GitHub](https://github.com) account and [AltStore](https://altstore.io) set up on your phone (their site has a 5-minute guide).
+iOS only runs apps signed for your specific device, so whichever option you pick, the app gets signed with **your own free Apple ID** via AltStore or Sideloadly. No paid Apple Developer account needed. (Apps signed this way run for 7 days, then AltStore re-signs them automatically.)
 
-1. **Fork or download this repo** to your own GitHub account.
-2. **Let it build.** Go to the **Actions** tab — a build kicks off automatically. Wait ~5 minutes for the green checkmark.
-3. **Download the IPA.** Open the finished run, scroll to **Artifacts**, download `PhotoSwipe-ipa`, and unzip it to get `PhotoSwipe.ipa`.
-4. **Get it onto your phone** — AirDrop, iCloud Drive, or any cloud app works.
-5. **Open it with AltStore.** AltStore signs and installs it. Then trust your Apple ID under Settings → General → VPN & Device Management, and enable Developer Mode (Settings → Privacy & Security → Developer Mode) on iOS 16+.
-6. **Launch PhotoSwipe**, grant photo access (choose "All Photos"), and start swiping.
+You'll need [AltStore](https://altstore.io) (or [Sideloadly](https://sideloadly.io)) set up on your phone first — their sites have short guides.
+
+### Option 1 — Just download (easiest)
+
+1. Go to the [**Releases**](../../releases) page of this repo.
+2. Download the latest `PhotoSwipe-vX.X.ipa`.
+3. Get it onto your phone (AirDrop, iCloud Drive, or any cloud app).
+4. Open it with **AltStore** → it signs with your Apple ID and installs.
+5. Trust your Apple ID: Settings → General → VPN & Device Management.
+6. On iOS 16+: enable Settings → Privacy & Security → Developer Mode.
+
+That's it — no GitHub Actions, no building anything.
+
+### Option 2 — Build it yourself in the cloud
+
+If there's no release yet, or you changed the code:
+
+1. **Fork** this repo to your own GitHub account.
+2. Go to the **Actions** tab — a build starts automatically. Wait ~5 minutes for the green checkmark.
+3. Open the finished run, scroll to **Artifacts**, download `PhotoSwipe-ipa`, and unzip to get the `.ipa`.
+4. Install it via AltStore exactly like steps 3–6 above.
+
+### Option 3 — Cut your own release
+
+To produce a downloadable release (so you or others can use Option 1 later), push a version tag:
+
+```bash
+git tag v1.0
+git push origin v1.0
+```
+
+The workflow builds the app and automatically publishes a GitHub Release with the `.ipa` attached. Every new tag (`v1.1`, `v1.2`, …) makes a new release.
 
 > First launch asks for photo-library permission. Swiping up the first time may also ask permission to add to albums — both are required for the app to work.
 
